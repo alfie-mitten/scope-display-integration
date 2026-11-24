@@ -2,27 +2,21 @@
 
 A Home Assistant integration for an oscilloscope used as a vector display: a
 stereo DAC drives the scope in X-Y mode, and the box behind it
-([xy-bench](#the-box)) draws glanceable screens (a clock with temperatures,
-weather as curves and bars, plant moisture, a street map around the parked
-car) as single-stroke line art.
+([xy-bench](#the-box)) draws whatever frames it is sent as line art.
 
-The box draws; Home Assistant decides. This integration:
+The scope shows one thing: Alfie. The Alfie
+integration's scope card renders him (and his rotation of screens) and pushes
+each frame to the box. This integration only exposes the display as a device:
 
-- **feeds the screens.** You map an entity to each screen input once (inside
-  and outside temperature, today's high and low, the hourly forecast, two soil
-  moisture sensors, two car locations, today's birthdays). It pushes each one when it changes, at
-  most every 10 seconds, reads recorder history for the history screens, and
-  refills a box that restarted or was unreachable.
-- **exposes the display** as one device: the current **screen** (select),
-  the **scale** (number), **display power** (switch, wrapping the scope's
-  smart outlet), the Superintendent's **face mood** (select, held until
-  changed) and **face animation** (select: each pick plays once over the
-  mood, then he is back to it), the **screen transition** (select: how each
-  screen comes in -- draw, zoom, slide, fade, morph and more, or random) and
-  **transition exit** (switch: the old screen first leaves the same way,
-  backwards), and status sensors.
+| Entity | What it does |
+|---|---|
+| **Display power** (switch) | Wraps the scope's smart outlet. Off has to cut the power: a stopped signal parks the beam on one spot and burns the phosphor. |
+| **Scale** (number) | 0..1 of full deflection, capped at the maximum calibrated on the box. |
+| **Output** (sensor) | `playing`, `stopped` or `error`: the audio feed into the scope. |
+| **Frame rate** (sensor) | Long frames run slower, down to the box's floor (50 fps by default). |
 
-Automations then only decide which screen shows and when the display is on.
+What is on the scope is Alfie's business (his rotations, `alfie.step_rotation`,
+`alfie.show_rotation`); automations here only decide when the display is on.
 
 ## Install
 
@@ -30,156 +24,25 @@ Through [HACS](https://hacs.xyz): *HACS → ⋮ → Custom repositories*, add
 `https://github.com/alfie-mitten/scope-display-integration` as an
 **Integration**, install **XY Scope Display**, and restart Home Assistant.
 
-Manually: copy `custom_components/xy_scope` into your config's
-`custom_components/` and restart.
-
 Requires Home Assistant 2026.9 or newer.
 
 ## Set up
 
-*Settings → Devices & services → Add integration → XY Scope Display*, then:
-
-- **Host** and **port** of the box (its web page; 8080 by default).
-- **Token**: the box's `XYBENCH_TOKEN`, from its `.env`.
-
-The integration checks the box answers and accepts the token before saving.
-
-Then *Configure* to see the screen inputs. They come pre-filled with guesses
-found by device class and name (temperature sensors, a weather entity with an
-hourly forecast, moisture sensors, anything with "car" or "park" and a
-location, a switch with "scope" in its name). Change or clear any of them; a
-cleared input shows as `--` on the display.
-
-| Option | Feeds | Pushed as |
-|---|---|---|
-| Inside temperature | Home; Temp week | `inside_temp`, `inside_week` (7 days, hourly) |
-| Outside temperature | Home, Weather; Temp week | `outside_temp`, `outside_week` |
-| Today's high / low | Weather | `high_temp`, `low_temp` |
-| Forecast (hourly) | Weather | `forecast_temp`, `forecast_rain` (next 24 h) |
-| Plant 1 / 2 soil moisture | Plants (line ending in a ring / a diamond) | `plant_a`, `plant_b` (14 days, every 2 h) |
-| Car 1 / 2 location | Car map | `car_a`, `car_b` (`{"lat", "lon"}`) |
-| Birthdays today | Birthday, Birthday 2-4 (one per title) | `birthdays` (the entity's `titles` attribute, a list of strings) |
-| Display outlet | Display power switch | (not pushed) |
-
-Also pushed: `sun` (today's rise, noon and set as local hours, and the sun's
-elevation and azimuth now, from `sun.sun`), `location` (home's latitude and
-longitude, for the sky maths on the box) and, with a forecast entity set,
-`weather_now` (its condition -- `sunny`, `rainy`, ... -- and its humidity,
-wind speed and bearing, pressure, cloud cover, UV index and dew point).
-
-An entity that is unavailable or unknown is treated as no news: the box keeps
-the last good value instead of blanking to `--` whenever Home Assistant
-restarts or a sensor misses a report. Clearing an option clears its input.
-
-## Entities
-
-| Entity | What it does |
-|---|---|
-| `select.xy_scope_screen` | The screen shown. Options are the box's own screen names (`home`, `weather`, `welcome`, ...). A screen picked by a person (dashboard, app, voice) holds for a minute: automations that pick a screen meanwhile wait, and the newest of their picks goes out when the minute is up. The `held_until` attribute shows when a hold ends. |
-| `select.xy_scope_music` | Oscilloscope music: the box's tracks. Picking one plays it start to finish on the scope and the music speaker, then the screens carry on (see [Music](#music)). |
-| `select.xy_scope_music_speaker` | The media player the music is heard on, or *Scope only*. |
-| `number.xy_scope_speaker_delay` | Seconds the speaker's sound runs behind what it reports; raise it until the sound lands with the picture. |
-| `number.xy_scope_scale` | Picture size, 0.05 up to the maximum calibrated on the box. |
-| `switch.xy_scope_display_power` | The scope's outlet. Off really cuts power: a stopped signal would park the beam on one spot and burn the phosphor. Only created when an outlet is set in the options. |
-| `sensor.xy_scope_current_screen` | The screen shown, as text. |
-| `sensor.xy_scope_output` | `playing`, `stopped` or `error` (the audio feed into the scope). |
-| `sensor.xy_scope_frame_rate` | Frames per second; long screens draw slower, down to the box's floor (50). |
-| `sensor.xy_scope_inputs` | How many inputs the box holds; the `ages` attribute shows each one's age in seconds. |
-
-## Automations
-
-Show the welcome screen when someone arrives, then go back home:
-
-```yaml
-triggers:
-  - trigger: zone
-    entity_id: person.someone
-    zone: zone.home
-    event: enter
-actions:
-  - action: switch.turn_on
-    target:
-      entity_id: switch.xy_scope_display_power
-  - action: select.select_option
-    target:
-      entity_id: select.xy_scope_screen
-    data:
-      option: welcome
-  - delay: 20
-  - action: select.select_option
-    target:
-      entity_id: select.xy_scope_screen
-    data:
-      option: home
-```
-
-Display power off when nobody is home:
-
-```yaml
-triggers:
-  - trigger: numeric_state
-    entity_id: zone.home
-    below: 1
-    for:
-      minutes: 1
-actions:
-  - action: switch.turn_off
-    target:
-      entity_id: switch.xy_scope_display_power
-```
-
-## Music
-
-The box can play oscilloscope music: tracks whose left and right channels
-*are* the picture. Pick a track in `select.xy_scope_music` (or pick `music`
-in the screen select to play the box's current track) and:
-
-1. the music speaker, if one is chosen, plays the same file, fetched from the
-   box;
-2. once the speaker is playing, the scope starts at the speaker's position,
-   less the speaker delay, so picture and sound line up (and again a few
-   seconds in, once the speaker's position has settled);
-3. the screen holds for the rest of the song, whoever picked it: the
-   timetable's picks wait, and the newest goes out when the song ends. The
-   box goes back to the screen from before by itself the moment the track
-   ends, so the scope never sits silent.
-
-A person picking another screen ends the song early and stops the speaker.
-If the speaker cannot start, the song still plays on the scope.
-
-Play a track from an automation or script:
-
-```yaml
-action: select.select_option
-target:
-  entity_id: select.xy_scope_music
-data:
-  option: Jerobeam Fenderson - Planets
-```
+*Settings → Devices & services → Add integration → XY Scope Display*, then
+the box's **host**, **port** (8080 by default) and **token** (its
+`XYBENCH_TOKEN`). *Configure* picks the scope's outlet; a switch or light
+with "scope" in its name is guessed.
 
 ## The box
 
-The box is a small stdlib-only Python server that turns screens into a stereo
-audio stream. Its push API, which this integration speaks (version 1):
-
 ```
-GET /api/status    {"api": 1, "boot": "<id per process>", "screen": "home",
-                    "screens": [{"name", "label"}], "scale", "max_scale",
-                    "playing", "error", "fps", "inputs": {name: age_seconds},
-                    "track", "tracks": [{"name", "seconds"}],
-                    "music": {"track", "pos", "seconds", "playing"}}
-PUT /api/inputs    {"inside_temp": 21.5, "old_input": null}
-                   merge; null removes; any name [a-z][a-z0-9_]{0,47}
-PUT /api/screen    {"screen": "home", "scale": 0.6}    either key optional
-PUT /api/screen    {"screen": "music", "track": "Planets", "at": 1.5,
-                    "once": true}     play a track from `at` seconds; with
-                   `once`, back to the screen before when it ends
-GET /music/<track>.wav               the track itself (byte ranges), for a
-                                     speaker to play
+GET /api/status    {"api": 1, "boot", "scale", "max_scale", "playing",
+                    "error", "fps", "alfie": {"age", "strokes"}}
+PUT /api/screen    {"scale": 0.6}        an empty body changes nothing
+PUT /api/strokes   a frame of Alfie (from his scope card)
 ```
 
-Writes carry `Authorization: Bearer <XYBENCH_TOKEN>`. Series are evenly
-spaced lists of numbers, oldest first, ending now, with `null` for gaps.
+Writes carry `Authorization: Bearer <XYBENCH_TOKEN>`.
 
 ## Development
 

@@ -1,4 +1,4 @@
-"""Set up a box (host, port, token), and map entities onto its inputs."""
+"""Set up a box (host, port, token), and pick the scope's outlet."""
 
 from __future__ import annotations
 
@@ -21,41 +21,18 @@ from homeassistant.helpers.selector import (
 )
 
 from .api import ScopeAuthError, ScopeClient, ScopeConnectionError, ScopeVersionError
-from .const import (
-    DEFAULT_PORT,
-    DOMAIN,
-    LOGGER,
-    OPT_BIRTHDAYS,
-    OPT_CAR_A,
-    OPT_CAR_B,
-    OPT_HIGH_TEMP,
-    OPT_INSIDE_TEMP,
-    OPT_LOW_TEMP,
-    OPT_OUTSIDE_TEMP,
-    OPT_PLANT_A,
-    OPT_PLANT_B,
-    OPT_POWER,
-    OPT_WEATHER,
-)
-from .suggest import suggest_options
+from .const import DEFAULT_PORT, DOMAIN, LOGGER, OPT_POWER
 
-_TEMP = EntitySelector(EntitySelectorConfig(
-    domain=["sensor", "weather", "input_number"]))
-_SELECTORS = {
-    OPT_INSIDE_TEMP: _TEMP,
-    OPT_OUTSIDE_TEMP: _TEMP,
-    OPT_HIGH_TEMP: _TEMP,
-    OPT_LOW_TEMP: _TEMP,
-    OPT_WEATHER: EntitySelector(EntitySelectorConfig(domain="weather")),
-    OPT_PLANT_A: EntitySelector(EntitySelectorConfig(domain="sensor")),
-    OPT_PLANT_B: EntitySelector(EntitySelectorConfig(domain="sensor")),
-    OPT_CAR_A: EntitySelector(EntitySelectorConfig(
-        domain=["sensor", "device_tracker", "person"])),
-    OPT_CAR_B: EntitySelector(EntitySelectorConfig(
-        domain=["sensor", "device_tracker", "person"])),
-    OPT_BIRTHDAYS: EntitySelector(EntitySelectorConfig(domain="sensor")),
-    OPT_POWER: EntitySelector(EntitySelectorConfig(domain=["switch", "light"])),
-}
+_POWER = EntitySelector(EntitySelectorConfig(domain=["switch", "light"]))
+
+
+def _suggest_power(hass: HomeAssistant) -> dict[str, Any]:
+    """A switch or light with "scope" in its id or name, as a first guess."""
+    for state in hass.states.async_all(["switch", "light"]):
+        words = f"{state.entity_id} {state.attributes.get('friendly_name', '')}".lower()
+        if "scope" in words:
+            return {OPT_POWER: state.entity_id}
+    return {}
 
 
 def _box_schema(defaults: Mapping[str, Any]) -> vol.Schema:
@@ -104,9 +81,8 @@ class ScopeConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title=f"XY Scope ({user_input[CONF_HOST]})",
                     data=user_input,
-                    # Start feeding straight away from the best guesses; the
-                    # options form shows them and every one can be changed.
-                    options=suggest_options(self.hass),
+                    # A guess at the outlet; Configure shows it and can change it.
+                    options=_suggest_power(self.hass),
                 )
         return self.async_show_form(
             step_id="user",
@@ -157,15 +133,14 @@ class ScopeConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class ScopeOptionsFlow(OptionsFlow):
-    """One entity per screen input, plus the display's outlet. Every field is
-    optional; a cleared one stops that input (the screen shows `--`)."""
+    """The display's outlet (optional: without it there is no power switch)."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(data=user_input)
-        schema = vol.Schema({vol.Optional(k): sel for k, sel in _SELECTORS.items()})
+        schema = vol.Schema({vol.Optional(OPT_POWER): _POWER})
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(

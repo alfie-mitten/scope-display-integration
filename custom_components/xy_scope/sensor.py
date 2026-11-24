@@ -1,5 +1,4 @@
-"""What the display is doing: its screen, whether it is playing, its frame
-rate, and which inputs it holds."""
+"""What the display is doing: whether it is playing, and its frame rate."""
 
 from __future__ import annotations
 
@@ -20,17 +19,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     c = entry.runtime_data.coordinator
-    async_add_entities([ScreenSensor(c), OutputSensor(c), FpsSensor(c),
-                        InputsSensor(c)])
-
-
-class ScreenSensor(ScopeEntity, SensorEntity):
-    def __init__(self, coordinator) -> None:
-        super().__init__(coordinator, "current_screen")
-
-    @property
-    def native_value(self) -> str | None:
-        return self.coordinator.data.get("screen")
+    async_add_entities([OutputSensor(c), FpsSensor(c)])
 
 
 class OutputSensor(ScopeEntity, SensorEntity):
@@ -55,8 +44,8 @@ class OutputSensor(ScopeEntity, SensorEntity):
 
 
 class FpsSensor(ScopeEntity, SensorEntity):
-    """Frames per second: long screens get longer frames, down to the box's
-    floor (50 by default), so a drop here means a screen is near its limit."""
+    """Frames per second: long frames run slower, down to the box's floor
+    (50 by default), so a drop here means Alfie's picture is near its limit."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -69,23 +58,3 @@ class FpsSensor(ScopeEntity, SensorEntity):
     def native_value(self) -> float | None:
         return self.coordinator.data.get("fps")
 
-
-class InputsSensor(ScopeEntity, SensorEntity):
-    """How many inputs the box holds; the attributes give each one's age in
-    seconds, which is how to see the feed arriving."""
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    # Ages change on every poll; not worth a database row each time.
-    _unrecorded_attributes = frozenset({"ages"})
-
-    def __init__(self, coordinator) -> None:
-        super().__init__(coordinator, "inputs")
-
-    @property
-    def native_value(self) -> int:
-        return len(self.coordinator.data.get("inputs") or {})
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return {"ages": self.coordinator.data.get("inputs") or {}}
